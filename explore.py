@@ -2,7 +2,7 @@ import struct
 
 filepath = 'C:\\Users\\jamil\\projects\\OpenBugbear\\game\\out\\car_1\\collision.BMF'
 filepath = 'C:\\Users\\jamil\\projects\\OpenBugbear\\game\\out\\car_1\\model.BMF'
-#filepath = 'C:\\Users\\jamil\\projects\\OpenBugbear\\game\\out\\models\\stage4.BMF'
+filepath = 'C:\\projects\\OpenBugbear\\game\\out\\models\\stage1.BMF'
 #filepath = 'C:\\Users\\jamil\\projects\\OpenBugbear\\game\\out\\models\\animal_run.BMF'
 
 f = open(filepath, 'rb')
@@ -117,7 +117,17 @@ def parse_hierarchy(header : Header):
     result = []
     for i in range(count):
         next_object = parse_header()
-        result.append(parsers[next_object.name](next_object))
+        new_object = parsers[next_object.name](next_object)
+        #if type(new_object) != dict:
+        #    continue
+
+        #if "name" not in new_object:
+        #    continue
+
+        #if (str)(new_object["name"]).find("sign") == -1:
+        #    continue
+
+        result.append(new_object)
     return result
 
 def parse_scene(header : Header):
@@ -125,12 +135,49 @@ def parse_scene(header : Header):
     skip_shit(148)
     return name
 
+def get_transform_matrix():
+    def get_matrix_row():
+        x = get_float()
+        z = get_float()
+        y = get_float()
+        w = get_float()
+        return (x, y, z, w)
+    
+    row0 = get_matrix_row()
+    row2 = get_matrix_row()
+    row1 = get_matrix_row()
+    row3 = get_matrix_row()
+    return (
+        row0,
+        row1,
+        row2,
+        row3
+    )
+
 def parse_mesh(header : Header):
-    name = get_string()
-    skip_shit(140)
+    result = {
+        "name": get_string(),
+        "unknown_float_0": get_float(),
+        "transform_matrix": get_transform_matrix(),
+        "coords": parse_vertex(),
+        "unknown_float_1": get_float(),
+        "unknown_float_2": get_float(),
+        "unknown_float_3": get_float(),
+        "unknown_unit_0": get_unsigned(),
+        "unknown_float_4": get_float(),
+        "unknown_float_5": get_float(),
+        "unknown_float_6": get_float(),
+        "unknown_float_7": get_float(),
+        "unknown_float_8": get_float(),
+        "unknown_float_9": get_float(),
+        "unknown_float_10": get_float(),
+        "unknown_float_11": get_float(),
+        "unknown_float_12": get_float(),
+        "unknown_float_13": get_float(),
+        "unknown_unit_1": get_unsigned(),
+    }
+    
     model_header = parse_header()
-    result = {}
-    result["name"] = name
     result["model"] = parsers[model_header.name](model_header)
     return result
 
@@ -214,10 +261,29 @@ def parse_batch2(header : Header):
     return result
 
 def parse_track(header : Header):
-    skip_shit(40)
-    model_header = parse_header()
-    result = { model_header.name: parsers[model_header.name](model_header) }
-    return result
+    skip_shit(36)
+
+    res = []
+    size = get_unsigned()
+
+    for i in range(size):
+
+        result = {
+            "name": "track" + str(i),
+            "transform_matrix": (
+                (1, 0, 0, 0),
+                (0, 1, 0, 0),
+                (0, 0, 1, 0),
+                (0, 0, 0, 1),
+            ),
+            "coords": (0, 0, 0)
+        }
+
+        model_header = parse_header()
+        result["model"] = parsers[model_header.name](model_header)
+        res.append(result)
+
+    return res
 
 def parse_camera2(header : Header):
     name = get_string()
@@ -255,6 +321,7 @@ def decode_file():
 
 def blender_shit():
     import bpy
+    from mathutils import Matrix
 
     result = decode_file()
 
@@ -269,9 +336,12 @@ def blender_shit():
             mat = bpy.data.materials.new(name=materials[-1])
     
     
-    for model in result["HIERARCHY"]:
+    def add_model(model):
         if model == "Scene":
-            continue
+            return
+        
+        if type(model) == str:
+            return
 
         polylist = None
         vertexlist = None
@@ -283,7 +353,10 @@ def blender_shit():
         }
 
         def create_object(new_mesh):
+            new_mesh.transform(Matrix(model["transform_matrix"]))
+            new_mesh.update()
             new_object = bpy.data.objects.new(model["name"], new_mesh)
+            new_object.location = model["coords"]
             new_collection.objects.link(new_object)
 
         def create_from_lists():
@@ -316,8 +389,15 @@ def blender_shit():
             batches["faces"] += [(vert[0]+verts_offset, vert[1]+verts_offset, vert[2]+verts_offset) for vert in new_batch["faces"]]
             batches["material_indexes"] += new_batch["material_indexes"]
 
+        if batches["verts"]:
+            create_object(create_vertexlist_object(batches["verts"], batches["faces"], model["name"], materials, batches["material_indexes"]))
+    
+    # for model in result["HIERARCHY"]:
+        # add_model(model)
 
-        create_object(create_vertexlist_object(batches["verts"], batches["faces"], model["name"], materials, batches["material_indexes"]))
+    for model in result["TRACK"]:
+        add_model(model)
+
 
 def create_vertexlist_object(verts, faces, name, materials, material_indexes):
     import bpy
@@ -334,50 +414,6 @@ def create_vertexlist_object(verts, faces, name, materials, material_indexes):
         new_mesh.polygons[i].material_index = material_indexes[i]
 
     return new_mesh
-
-'''
-def blender_shit2():
-    import bpy
-    import mathutils
-
-    result = decode_file()
-    
-    model_index = 23
-
-    verts = []
-    for vert in result["HIERARCHY"][model_index]["model"]["BATCH2"]["vertex_list"]:
-        verts.append(vert["coords"])
-            
-    faces = []
-    for poly in result["HIERARCHY"][model_index]["model"]["BATCH2"]["poly_list"]:
-        faces.append(poly)
-
-    new_mesh = bpy.data.meshes.new(name="New Object Mesh")
-    new_mesh.from_pydata(verts, [], faces)
-    new_mesh.update()
-
-    new_object = bpy.data.objects.new('new_object', new_mesh)
-
-    new_collection = bpy.data.collections.new('new_collection')
-    bpy.context.scene.collection.children.link(new_collection)
-
-    new_collection.objects.link(new_object)
-    
-    for material in result["MATERIALLIST"]:
-        mat = bpy.data.materials.get(material["name"])
-        if mat is None:
-            mat = bpy.data.materials.new(name=material["name"])
-            
-        new_mesh.materials.append(mat)
-    new_mesh.use_auto_smooth = True
-    normals = [x["normals"] for x in result["HIERARCHY"][model_index]["model"]["BATCH2"]["vertex_list"]]
-    #normals = [(1.0, 0.0, 0.0) for x in result["HIERARCHY"][1]["model"]["BATCH2"]["unknown_list"]]
-    new_mesh.normals_split_custom_set_from_vertices(normals)
-    new_mesh.update()
-    
-    #for i in range(len(result["HIERARCHY"][1]["model"]["POLYLIST"])):
-    #    new_mesh.polygons[i].material_index = result["HIERARCHY"][1]["model"]["POLYLIST"][i]["material_index"]
-'''
 
 def nonblender_shit():
     result = decode_file()
